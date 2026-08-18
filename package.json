@@ -1,0 +1,18 @@
+{
+  "name": "dsh-core-patch-keeper",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "description": "DSH Desktop 核心补丁守护：启动时校验并自动恢复 3 处核心 patch（拖放路径桥、apiproxy 设置白名单、模型商拖拽排序），DSH 升级后无需手工重打",
+  "private": true
+}

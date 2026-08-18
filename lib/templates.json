@@ -1,0 +1,93 @@
+{
+  "generatedFrom": "D:\\dsh\\resources\\app",
+  "targets": {
+    "preload": {
+      "file": "preload.js",
+      "check": "__DSH_DROP_BRIDGE__",
+      "ops": [
+        {
+          "kind": "replace",
+          "old": "const { contextBridge, ipcRenderer } = require('electron');",
+          "new": "const { contextBridge, ipcRenderer, webUtils } = require('electron');"
+        },
+        {
+          "kind": "append",
+          "text": "// ---------------------------------------------------------------------------\r\n// dsh-drop-in path bridge: Electron >= 32 removed File.path; webUtils is only\r\n// reachable from preload. A capture-phase drop listener resolves absolute\r\n// paths and forwards them via the 'dsh-dropped-paths' window event, which the\r\n// dsh-drop-in plugin client consumes. Additive + fully guarded + idempotent.\r\n// ---------------------------------------------------------------------------\r\n(function installDropPathBridge() {\r\n  try {\r\n    if (window.__DSH_DROP_BRIDGE__) return;\r\n    if (typeof webUtils !== 'object' || typeof webUtils.getPathForFile !== 'function') return;\r\n    window.__DSH_DROP_BRIDGE__ = true;\r\n    document.addEventListener('drop', (event) => {\r\n      try {\r\n        const dt = event.dataTransfer;\r\n        if (!dt || !dt.files || dt.files.length === 0) return;\r\n        const entries = [];\r\n        for (const file of dt.files) {\r\n          let path = '';\r\n          try { path = String(webUtils.getPathForFile(file) || ''); } catch {}\r\n          entries.push({ name: String(file.name || ''), size: file.size || 0,\r\n            type: String(file.type || ''), lastModified: file.lastModified || 0, path });\r\n        }\r\n        window.dispatchEvent(new CustomEvent('dsh-dropped-paths', { detail: { entries } }));\r\n      } catch {}\r\n    }, true);\r\n  } catch {}\r\n})();\r\n"
+        }
+      ]
+    },
+    "main": {
+      "file": "main.js",
+      "check": "function applyDropInBridgeFix",
+      "ops": [
+        {
+          "kind": "insertBefore",
+          "anchor": "function applyProfilePatchGuard() {",
+          "insert": "function applyDropInBridgeFix() {\r\n  const preload = path.join(__dirname, 'preload.js');\r\n  if (!fs.existsSync(preload)) return;\r\n  try {\r\n    let src = readFileCached(preload);\r\n    if (src === null) { log('boot', '拖放路径桥: 读取失败，跳过 ' + preload); return; }\r\n    if (src.includes('__DSH_DROP_BRIDGE__')) { log('boot', '拖放路径桥: 已应用，跳过 ' + preload); return; }\r\n    if (!src.includes('webUtils')) {\r\n      const fromReq = \"const { contextBridge, ipcRenderer } = require('electron');\";\r\n      if (!src.includes(fromReq)) { log('boot', '拖放路径桥: electron require 锚点未匹配（版本可能已变化），跳过'); return; }\r\n      src = src.replace(fromReq, \"const { contextBridge, ipcRenderer, webUtils } = require('electron');\");\r\n    }\r\n    src += '\\n\\n// dsh-desktop fix: dsh-drop-in path bridge (idempotent)\\n' +\r\n      '(function installDropPathBridge() {\\n' +\r\n      '  try {\\n' +\r\n      '    if (window.__DSH_DROP_BRIDGE__) return;\\n' +\r\n      '    if (typeof webUtils !== \"object\" || typeof webUtils.getPathForFile !== \"function\") return;\\n' +\r\n      '    window.__DSH_DROP_BRIDGE__ = true;\\n' +\r\n      '    document.addEventListener(\"drop\", (event) => {\\n' +\r\n      '      try {\\n' +\r\n      '        const dt = event.dataTransfer;\\n' +\r\n      '        if (!dt || !dt.files || dt.files.length === 0) return;\\n' +\r\n      '        const entries = [];\\n' +\r\n      '        for (const file of dt.files) {\\n' +\r\n      '          let p = \"\";\\n' +\r\n      '          try { p = String(webUtils.getPathForFile(file) || \"\"); } catch {}\\n' +\r\n      '          entries.push({ name: String(file.name || \"\"), size: file.size || 0,\\n' +\r\n      '            type: String(file.type || \"\"), lastModified: file.lastModified || 0, path: p });\\n' +\r\n      '        }\\n' +\r\n      '        window.dispatchEvent(new CustomEvent(\"dsh-dropped-paths\", { detail: { entries } }));\\n' +\r\n      '      } catch {}\\n' +\r\n      '    }, true);\\n' +\r\n      '  } catch {}\\n' +\r\n      '})();\\n';\r\n    fs.writeFileSync(preload, src, { encoding: 'utf8' });\r\n    log('boot', '拖放路径桥: 已重打 preload.js ' + preload);\r\n  } catch (err) {\r\n    log('boot', '拖放路径桥失败: ' + err.message);\r\n  }\r\n}\r\n// ---------------------------------------------------------------------------\r\n// dsh 装配层防护：profile 自有的 cordis.patch.yml 属于用户数据，dsh 官方设计是\r\n// 「补丁文件损坏必须启动失败」（fail loud）。但该文件损坏会让桌面端永久无法\r\n// 启动。这里像 applyRuntimeFlashFix 一样幂等地改写 @deepseek-ai/dsh-app-boot：\r\n// 把 loadProfile 对 profile patch 的严格加载替换为「解析失败 → 备份 + 重置为\r\n// 空列表并继续启动」的自愈加载；CLI 等其它入口同样受益。dsh 更新后本函数会在\r\n// 下次启动重新应用。\r\n// ---------------------------------------------------------------------------\r\n"
+        },
+        {
+          "kind": "insertLineAfter",
+          "line": "      applyVisionKeyFix();",
+          "insertLine": "      applyDropInBridgeFix();",
+          "expect": 2
+        },
+        {
+          "kind": "insertLineAfter",
+          "line": "    applyVisionKeyFix();",
+          "insertLine": "    applyDropInBridgeFix();",
+          "expect": 2
+        }
+      ]
+    },
+    "models": {
+      "file": "node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/client.js",
+      "check": "persistProviderOrder",
+      "ops": [
+        {
+          "kind": "replace",
+          "old": "tag.textContent = css$3;\n\t\t\tdocument.head.appendChild(tag);\n\t\t}\n\t\t",
+          "new": "tag.textContent = css$3;\n\t\t\tdocument.head.appendChild(tag);\n\t\t}\n\t\t// dsh-provider-order: provider row drag-to-reorder styling (patched by the provider-order plugin workflow).\n\t\tconst dpoCss = \".zjMdl_rowCard{cursor:grab}.zjMdl_dragging{opacity:.45}.zjMdl_over{border-color:var(--dsw-alias-brand-primary,#3964fe);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary,#3964fe)}\";\n\t\tconst dpoTagId = \"@deepseek-ai/dsh-client-ui-settings-models/dsh-provider-order-dnd.css\";\n\t\tif (typeof document !== \"undefined\" && document.querySelector(\"style[data-plugin-css=\" + JSON.stringify(dpoTagId) + \"]\") === null) {\n\t\t\tconst tag = document.createElement(\"style\");\n\t\t\ttag.dataset.plugin = \"@dsh-external/dsh-provider-order\";\n\t\t\ttag.dataset.pluginCss = dpoTagId;\n\t\t\ttag.textContent = dpoCss;\n\t\t\tdocument.head.appendChild(tag);\n\t\t}\n\t\t"
+        },
+        {
+          "kind": "insertAfter",
+          "anchor": "\t\t\tawait controller.load();\n\t\t}\n\t\t",
+          "insert": "/**\n\t\t* Persist one provider ordering into the provider-order namespace owned by\n\t\t* @dsh-external/dsh-provider-order. The host plugin reorders the live LLM\n\t\t* catalog on this write (settings/document-updated then reloads the page).\n\t\t* @param api - the client connection API.\n\t\t* @param providerIds - the full row order (all providers, live-only included).\n\t\t* @returns the failure message, or undefined on success.\n\t\t*/\n\t\tasync function persistProviderOrder(api, providerIds) {\n\t\t\ttry {\n\t\t\t\tconst response = await fetch(\"/dsh-provider-order/order\", {\n\t\t\t\t\tmethod: \"PUT\",\n\t\t\t\t\theaders: { \"content-type\": \"application/json\" },\n\t\t\t\t\tbody: JSON.stringify({ order: providerIds }),\n\t\t\t\t\tsignal: AbortSignal.timeout(5000)\n\t\t\t\t});\n\t\t\t\tconst json = await response.json().catch(() => ({}));\n\t\t\t\tif (json && json.ok !== true) return (json && json.error) || \"保存模型商顺序失败\";\n\t\t\t} catch (error) {\n\t\t\t\treturn messageOf$1(error);\n\t\t\t}\n\t\t}\n\t\t"
+        },
+        {
+          "kind": "insertAfter",
+          "anchor": "const [dismissedSetup, setDismissedSetup] = (0, react.useState)(() => /* @__PURE__ */ new Set());\n\t\t\t",
+          "insert": "// dsh-provider-order: provider row drag-to-reorder state.\n\t\t\tconst [dragProvider, setDragProvider] = (0, react.useState)(void 0);\n\t\t\tconst [dragOver, setDragOver] = (0, react.useState)(void 0);\n\t\t\tconst finishDrag = (targetProvider) => {\n\t\t\t\tsetDragOver(void 0);\n\t\t\t\tconst from = dragProvider;\n\t\t\t\tsetDragProvider(void 0);\n\t\t\t\tif (from === void 0 || from === targetProvider || state.status !== \"ready\" || state.writable !== true) return;\n\t\t\t\tconst ids = state.rows.map((row) => row.entry.provider);\n\t\t\t\tconst fromIndex = ids.indexOf(from);\n\t\t\t\tconst toIndex = ids.indexOf(targetProvider);\n\t\t\t\tif (fromIndex < 0 || toIndex < 0) return;\n\t\t\t\tconst next = ids.slice();\n\t\t\t\tnext.splice(fromIndex, 1);\n\t\t\t\tnext.splice(toIndex, 0, from);\n\t\t\t\tpersistProviderOrder(api, next).then((failure) => {\n\t\t\t\t\tif (failure !== void 0) /* v8 ignore next */ console.warn(\"provider-order: failed to persist order:\", failure);\n\t\t\t\t});\n\t\t\t};\n\t\t\t"
+        },
+        {
+          "kind": "replace",
+          "old": "\t\t\t\t\t\t\t\tclassName: ModelsSection_module_css_default[\"rowCard\"],\n\t\t\t\t\t\t\t\tchildren: [(0, react_jsx_runtime.jsxs)(\"div\", {",
+          "new": "\t\t\t\t\t\t\t\tclassName: ModelsSection_module_css_default[\"rowCard\"] + \" zjMdl_rowCard\" + (dragProvider === row.entry.provider ? \" zjMdl_dragging\" : \"\") + (dragOver === row.entry.provider ? \" zjMdl_over\" : \"\"),\n\t\t\t\t\t\t\t\tdraggable: state.writable === true && state.status === \"ready\",\n\t\t\t\t\t\t\t\tonDragStart: (event) => {\n\t\t\t\t\t\t\t\t\tsetDragProvider(row.entry.provider);\n\t\t\t\t\t\t\t\t\tevent.dataTransfer?.setData(\"text/plain\", row.entry.provider);\n\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\tonDragOver: (event) => {\n\t\t\t\t\t\t\t\t\tevent.preventDefault();\n\t\t\t\t\t\t\t\t\tsetDragOver(row.entry.provider);\n\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\tonDragLeave: () => {\n\t\t\t\t\t\t\t\t\tsetDragOver((current) => current === row.entry.provider ? void 0 : current);\n\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\tonDrop: (event) => {\n\t\t\t\t\t\t\t\t\tevent.preventDefault();\n\t\t\t\t\t\t\t\t\tfinishDrag(row.entry.provider);\n\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\tonDragEnd: () => {\n\t\t\t\t\t\t\t\t\tsetDragProvider(void 0);\n\t\t\t\t\t\t\t\t\tsetDragOver(void 0);\n\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\tchildren: [(0, react_jsx_runtime.jsxs)(\"div\", {"
+        }
+      ]
+    },
+    "main-bom": {
+      "file": "main.js",
+      "check": "0xfeff",
+      "ops": [
+        {
+          "kind": "replaceOnceIfMissing",
+          "check": "0xfeff",
+          "old": "manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));",
+          "new": "      let raw = fs.readFileSync(manifestFile, 'utf8');\r\n      // 去掉 UTF-8 BOM：历史快照/编辑器可能写入 BOM，JSON.parse 会因 BOM 抛错，\r\n      // 旧逻辑因此误判为全新 profile 并用最小清单覆盖用户的第三方插件清单。\r\n      if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);\r\n      manifest = JSON.parse(raw);"
+        }
+      ]
+    },
+    "apiproxy-vision-autodescribe": {
+      "file": "node_modules/@deepseek-ai/dsh-host-apiproxy/lib/index.js",
+      "check": "vision.autoDescribe === false",
+      "ops": [
+        {
+          "kind": "replaceOnceIfMissing",
+          "check": "vision.autoDescribe === false",
+          "old": "\tif (vision === null || typeof vision.baseURL !== \"string\" || vision.baseURL.trim() === \"\" || typeof vision.model !== \"string\" || vision.model.trim() === \"\") {\n\t\tthrow new Error(\"未配置识图服务：请到 设置 → 识图插件（view_image） 填写 VLM 接口地址与模型\");\n\t}",
+          "new": "\tif (vision.autoDescribe === false) return null;\n\tif (vision === null || typeof vision.baseURL !== \"string\" || vision.baseURL.trim() === \"\" || typeof vision.model !== \"string\" || vision.model.trim() === \"\") {\n\t\t// 未配置识图服务：跳过转述、原样直发图片（模型不支持图片时由模型侧自然报错，不再因转述阻塞发送）。\n\t\treturn null;\n\t}"
+        }
+      ]
+    }
+  }
+}

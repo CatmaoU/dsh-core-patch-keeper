@@ -1,0 +1,3 @@
+- insert:
+    - id: core-patch-keeper
+      name: dsh-core-patch-keeper
